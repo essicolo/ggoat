@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ggoat"
+version = "0.1.0"
+description = "Grammar of Graphics for Python - optimized for Pyodide and browser environments"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "ggoat development team", email = "contact@ggoat.dev"},
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ggoat = ["assets/*.js"]

@@ -1,0 +1,212 @@
+name: Build and Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v1.0.0, v0.1.0, etc.
+  release:
+    types: [published]
+  workflow_dispatch:  # Allow manual triggering
+    inputs:
+      test_pypi:
+        description: 'Publish to Test PyPI instead of PyPI'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    name: Build distribution packages
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for proper versioning
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine check-manifest
+        
+    - name: Verify package manifest
+      run: |
+        check-manifest
+        
+    - name: Build source distribution and wheel
+      run: |
+        python -m build
+        
+    - name: Verify build artifacts
+      run: |
+        twine check dist/*
+        ls -la dist/
+        
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: python-package-distributions
+        path: dist/
+        retention-days: 30
+
+  test-install:
+    name: Test installation
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.7', '3.8', '3.9', '3.10', '3.11', '3.12']
+        exclude:
+          # Reduce matrix size by excluding some combinations
+          - os: windows-latest
+            python-version: '3.7'
+          - os: macos-latest
+            python-version: '3.7'
+    
+    steps:
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: python-package-distributions
+        path: dist/
+        
+    - name: Test wheel installation
+      run: |
+        pip install dist/*.whl
+        python -c "import ggoat; print(f'ggoat version: {ggoat.__version__}')"
+        python -c "from ggoat import ggplot, aes; print('✅ Basic imports successful')"
+        
+    - name: Test basic functionality
+      run: |
+        python -c "
+        from ggoat import ggplot, aes
+        data = {'x': [1, 2, 3], 'y': [4, 5, 6]}
+        plot = ggplot(data, aes(x='x', y='y')).geom_point()
+        spec = plot.build()
+        assert 'layers' in spec
+        assert len(spec['layers']) == 1
+        print('✅ Basic functionality test passed')
+        "
+
+  publish-to-testpypi:
+    name: Publish to Test PyPI
+    if: github.event_name == 'workflow_dispatch' && inputs.test_pypi
+    needs: [build, test-install]
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/ggoat
+    permissions:
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
+      
+    steps:
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: python-package-distributions
+        path: dist/
+        
+    - name: Publish to Test PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        repository-url: https://test.pypi.org/legacy/
+        verbose: true
+        print-hash: true
+
+  publish-to-pypi:
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+    needs: [build, test-install]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/ggoat
+    permissions:
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
+      
+    steps:
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: python-package-distributions
+        path: dist/
+        
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        verbose: true
+        print-hash: true
+        
+    - name: Create GitHub Release (if tag)
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/*
+        generate_release_notes: true
+        draft: false
+        prerelease: false
+
+  post-publish:
+    name: Post-publish verification
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+    needs: publish-to-pypi
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Wait for PyPI propagation
+      run: sleep 120  # Wait 2 minutes for PyPI to propagate
+      
+    - name: Verify PyPI installation
+      run: |
+        pip install ggoat
+        python -c "
+        import ggoat
+        print(f'✅ Successfully installed ggoat v{ggoat.__version__} from PyPI')
+        from ggoat import ggplot, aes
+        print('✅ Imports working correctly')
+        
+        # Test basic functionality
+        data = {'x': [1, 2, 3], 'y': [4, 5, 6]}
+        plot = ggplot(data, aes(x='x', y='y')).geom_point()
+        spec = plot.build()
+        assert 'layers' in spec
+        print('✅ Basic functionality verified')
+        "
+        
+    - name: Update package status
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const tagName = context.ref.replace('refs/tags/', '');
+          const issueBody = `🎉 **ggoat ${tagName} has been published to PyPI!**
+          
+          📦 **Install:** \`pip install ggoat\`
+          🔗 **PyPI:** https://pypi.org/project/ggoat/
+          📚 **Documentation:** https://ggoat.readthedocs.io/
+          
+          **Changes in this release:**
+          See the [release notes](https://github.com/ggoat/ggoat/releases/tag/${tagName}) for details.
+          
+          Happy plotting! 🐐📊✨`;
+          
+          // Create a new issue to announce the release
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `📦 ggoat ${tagName} published to PyPI`,
+            body: issueBody,
+            labels: ['release', 'announcement']
+          });

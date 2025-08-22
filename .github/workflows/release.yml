@@ -1,0 +1,267 @@
+name: Release Management
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Type of version bump'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      pre_release:
+        description: 'Create a pre-release'
+        required: false
+        default: false
+        type: boolean
+      release_notes:
+        description: 'Additional release notes'
+        required: false
+        type: string
+
+jobs:
+  prepare-release:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.version.outputs.new_version }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install bump2version gitpython
+        
+    - name: Configure Git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+    - name: Get current version
+      id: current_version
+      run: |
+        current=$(python -c "import ggoat; print(ggoat.__version__)")
+        echo "current_version=$current" >> $GITHUB_OUTPUT
+        
+    - name: Bump version
+      id: version
+      run: |
+        # Update version in all necessary files
+        bump2version ${{ github.event.inputs.version_type }} --verbose
+        
+        # Get the new version
+        new_version=$(python -c "import ggoat; print(ggoat.__version__)")
+        echo "new_version=$new_version" >> $GITHUB_OUTPUT
+        echo "New version: $new_version"
+        
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Generate changelog from git commits since last tag
+        last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        
+        if [ -z "$last_tag" ]; then
+          # First release
+          changelog="🎉 Initial release of ggoat!"
+        else
+          # Generate changelog from commits
+          changelog=$(git log $last_tag..HEAD --pretty=format:"- %s" --no-merges)
+        fi
+        
+        # Add custom release notes if provided
+        if [ -n "${{ github.event.inputs.release_notes }}" ]; then
+          changelog="${{ github.event.inputs.release_notes }}\n\n## Changes\n$changelog"
+        fi
+        
+        # Save changelog to output
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        echo "$changelog" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+    - name: Create and push tag
+      run: |
+        tag_name="v${{ steps.version.outputs.new_version }}"
+        git tag -a "$tag_name" -m "Release $tag_name"
+        git push origin "$tag_name"
+        
+    - name: Update main branch
+      run: |
+        git push origin main
+
+  create-release:
+    name: Create GitHub Release
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        ref: v${{ needs.prepare-release.outputs.new_version }}
+        
+    - name: Build release artifacts
+      run: |
+        python -m pip install --upgrade pip build
+        python -m build
+        
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ needs.prepare-release.outputs.new_version }}
+        name: ggoat v${{ needs.prepare-release.outputs.new_version }}
+        body: |
+          # ggoat v${{ needs.prepare-release.outputs.new_version }}
+          
+          ${{ needs.prepare-release.outputs.changelog }}
+          
+          ## Installation
+          
+          ```bash
+          pip install ggoat==${{ needs.prepare-release.outputs.new_version }}
+          ```
+          
+          ## What's Changed
+          Full changelog: https://github.com/ggoat/ggoat/compare/v${{ steps.current_version.outputs.current_version }}...v${{ needs.prepare-release.outputs.new_version }}
+          
+          ---
+          
+          🐐 Happy plotting with ggoat!
+        files: dist/*
+        prerelease: ${{ github.event.inputs.pre_release }}
+        draft: false
+        generate_release_notes: true
+
+  announce-release:
+    name: Announce Release
+    needs: [prepare-release, create-release]
+    runs-on: ubuntu-latest
+    if: success()
+    
+    steps:
+    - name: Create announcement issue
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const version = '${{ needs.prepare-release.outputs.new_version }}';
+          const isPreRelease = ${{ github.event.inputs.pre_release }};
+          const releaseType = isPreRelease ? 'Pre-release' : 'Release';
+          
+          const issueBody = `🎉 **ggoat v${version} has been released!**
+          
+          ${releaseType === 'Pre-release' ? '⚠️ This is a pre-release version.' : '✅ This is a stable release.'}
+          
+          ## 📦 Installation
+          
+          \`\`\`bash
+          pip install ggoat==${version}
+          \`\`\`
+          
+          ## 🔗 Links
+          
+          - 📖 [Documentation](https://ggoat.readthedocs.io/)
+          - 📦 [PyPI Package](https://pypi.org/project/ggoat/${version}/)
+          - 🏷️ [Release Notes](https://github.com/ggoat/ggoat/releases/tag/v${version})
+          - 📝 [Changelog](https://github.com/ggoat/ggoat/blob/main/CHANGELOG.md)
+          
+          ## 🆕 What's New
+          
+          ${{ needs.prepare-release.outputs.changelog }}
+          
+          ## 🤝 Contributing
+          
+          Interested in contributing to ggoat? Check out our [contributing guide](https://github.com/ggoat/ggoat/blob/main/CONTRIBUTING.md)!
+          
+          ---
+          
+          🐐 Happy plotting with ggoat! 📊✨`;
+          
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `🎉 ${releaseType}: ggoat v${version}`,
+            body: issueBody,
+            labels: ['release', 'announcement']
+          });
+
+  update-docs:
+    name: Update Documentation
+    needs: [prepare-release, create-release]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Trigger documentation update
+      uses: actions/github-script@v6
+      with:
+        script: |
+          // Trigger the documentation workflow to rebuild with new version
+          await github.rest.actions.createWorkflowDispatch({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            workflow_id: 'publish-docs.yml',
+            ref: 'main'
+          });
+
+  post-release-checks:
+    name: Post-Release Verification
+    needs: [prepare-release, create-release]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Wait for PyPI propagation
+      run: sleep 300  # Wait 5 minutes
+      
+    - name: Verify PyPI release
+      run: |
+        version="${{ needs.prepare-release.outputs.new_version }}"
+        max_attempts=10
+        attempt=0
+        
+        while [ $attempt -lt $max_attempts ]; do
+          if pip install "ggoat==$version" --no-deps; then
+            echo "✅ Successfully installed ggoat v$version from PyPI"
+            python -c "import ggoat; print(f'Version: {ggoat.__version__}')"
+            break
+          else
+            echo "⏳ Waiting for PyPI to propagate... (attempt $((attempt + 1))/$max_attempts)"
+            sleep 60
+            attempt=$((attempt + 1))
+          fi
+        done
+        
+        if [ $attempt -eq $max_attempts ]; then
+          echo "❌ Failed to install from PyPI after $max_attempts attempts"
+          exit 1
+        fi
+        
+    - name: Test basic functionality
+      run: |
+        python -c "
+        from ggoat import ggplot, aes
+        import ggoat
+        
+        print(f'✅ ggoat v{ggoat.__version__} imported successfully')
+        
+        # Test basic plot creation
+        data = {'x': [1, 2, 3], 'y': [4, 5, 6]}
+        plot = ggplot(data, aes(x='x', y='y')).geom_point()
+        spec = plot.build()
+        
+        assert 'layers' in spec
+        assert len(spec['layers']) == 1
+        print('✅ Basic functionality verified')
+        "

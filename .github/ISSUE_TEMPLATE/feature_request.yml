@@ -1,0 +1,159 @@
+name: ✨ Feature Request
+description: Suggest a new feature or enhancement for ggoat
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! 🚀
+        
+        Help us understand your idea and its impact.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      description: Please verify these items before submitting
+      options:
+        - label: I have searched existing issues and discussions for similar feature requests
+          required: true
+        - label: I have checked the documentation to see if this feature already exists
+          required: true
+        - label: This feature aligns with the Grammar of Graphics philosophy
+          required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature category
+      description: What type of feature is this?
+      options:
+        - New geom (geometric object)
+        - New statistical transformation
+        - New theme or styling option
+        - New scale type
+        - New coordinate system
+        - New faceting option
+        - Performance improvement
+        - Integration with external library
+        - Documentation improvement
+        - Developer experience
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Feature summary
+      description: Brief description of the proposed feature
+      placeholder: A one-sentence summary of what you want to add
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation and use case
+      description: Why is this feature needed? What problem does it solve?
+      placeholder: |
+        - What specific problem are you trying to solve?
+        - How would this feature benefit ggoat users?
+        - Are there existing workarounds that are insufficient?
+    validations:
+      required: true
+
+  - type: textarea
+    id: api-design
+    attributes:
+      label: Proposed API
+      description: How would users interact with this feature?
+      placeholder: |
+        ```python
+        # Example of how the new feature would be used
+        from ggoat import ggplot, aes
+        
+        plot = (ggplot(data, aes(x='x', y='y'))
+                .geom_new_feature(parameter=value)  # Your proposed API
+                .theme_minimal())
+        ```
+      render: python
+
+  - type: dropdown
+    id: ggplot2-equivalent
+    attributes:
+      label: ggplot2 equivalent
+      description: Does this feature exist in R's ggplot2?
+      options:
+        - "Yes - direct equivalent exists"
+        - "Yes - similar functionality exists"
+        - "No - this would be ggoat-specific"
+        - "Unsure"
+
+  - type: textarea
+    id: ggplot2-reference
+    attributes:
+      label: ggplot2 reference (if applicable)
+      description: If this exists in ggplot2, provide the R syntax
+      placeholder: |
+        ```r
+        # R ggplot2 equivalent
+        ggplot(data, aes(x=x, y=y)) +
+          geom_something(parameter=value)
+        ```
+      render: r
+
+  - type: dropdown
+    id: complexity
+    attributes:
+      label: Implementation complexity
+      description: How complex do you think this feature would be to implement?
+      options:
+        - Simple (small addition to existing code)
+        - Medium (new module or significant changes)
+        - Complex (major architectural changes)
+        - Unsure
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative solutions
+      description: Have you considered alternative approaches?
+      placeholder: |
+        - Other ways to achieve the same goal
+        - Similar features in other plotting libraries
+        - Workarounds you've tried
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - Low (nice to have)
+        - Medium (would be useful)
+        - High (blocking my work)
+        - Critical (essential for adoption)
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Any other information about this feature request
+      placeholder: |
+        - Links to relevant documentation or examples
+        - Related issues or discussions
+        - Implementation ideas or constraints
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      description: Are you willing to help implement this feature?
+      options:
+        - label: I would be willing to submit a pull request to implement this feature
+        - label: I would be willing to help with testing this feature
+        - label: I would be willing to help with documentation for this feature
