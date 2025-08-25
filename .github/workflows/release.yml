@@ -1,6 +1,10 @@
 name: Release Management
 
 on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/ggoat/__init__.py'
   workflow_dispatch:
     inputs:
       version_type:
@@ -29,6 +33,7 @@ jobs:
     outputs:
       new_version: ${{ steps.version.outputs.new_version }}
       changelog: ${{ steps.changelog.outputs.changelog }}
+      trigger_type: ${{ steps.trigger.outputs.trigger_type }}
     
     steps:
     - name: Checkout repository
@@ -38,7 +43,7 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
         
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         
@@ -52,22 +57,43 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         
+    - name: Detect release trigger
+      id: trigger
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "trigger_type=manual" >> $GITHUB_OUTPUT
+          echo "Manual release triggered"
+        else
+          echo "trigger_type=automatic" >> $GITHUB_OUTPUT  
+          echo "Automatic release triggered by version file change"
+        fi
+        
     - name: Get current version
       id: current_version
       run: |
+        # Install package to get version
+        pip install -e .
         current=$(python -c "import ggoat; print(ggoat.__version__)")
         echo "current_version=$current" >> $GITHUB_OUTPUT
+        echo "Current version: $current"
         
-    - name: Bump version
-      id: version
+    - name: Bump version (manual only)
+      id: version_bump
+      if: steps.trigger.outputs.trigger_type == 'manual'
       run: |
         # Update version in all necessary files
         bump2version ${{ github.event.inputs.version_type }} --verbose
         
-        # Get the new version
+        # Reinstall to get new version
+        pip install -e .
+        
+    - name: Get release version
+      id: version
+      run: |
+        # Get the version (either bumped or current from file change)
         new_version=$(python -c "import ggoat; print(ggoat.__version__)")
         echo "new_version=$new_version" >> $GITHUB_OUTPUT
-        echo "New version: $new_version"
+        echo "Release version: $new_version"
         
     - name: Generate changelog
       id: changelog
@@ -83,8 +109,8 @@ jobs:
           changelog=$(git log $last_tag..HEAD --pretty=format:"- %s" --no-merges)
         fi
         
-        # Add custom release notes if provided
-        if [ -n "${{ github.event.inputs.release_notes }}" ]; then
+        # Add custom release notes if provided (manual releases only)
+        if [ "${{ steps.trigger.outputs.trigger_type }}" == "manual" ] && [ -n "${{ github.event.inputs.release_notes }}" ]; then
           changelog="${{ github.event.inputs.release_notes }}\n\n## Changes\n$changelog"
         fi
         
@@ -96,10 +122,18 @@ jobs:
     - name: Create and push tag
       run: |
         tag_name="v${{ steps.version.outputs.new_version }}"
-        git tag -a "$tag_name" -m "Release $tag_name"
-        git push origin "$tag_name"
         
-    - name: Update main branch
+        # Check if tag already exists
+        if ! git tag -l | grep -q "^$tag_name$"; then
+          git tag -a "$tag_name" -m "Release $tag_name"
+          git push origin "$tag_name"
+          echo "Created and pushed tag: $tag_name"
+        else
+          echo "Tag $tag_name already exists"
+        fi
+        
+    - name: Update main branch (manual releases only)
+      if: steps.trigger.outputs.trigger_type == 'manual'
       run: |
         git push origin main
 
@@ -142,7 +176,7 @@ jobs:
           
           🐐 Happy plotting with ggoat!
         files: dist/*
-        prerelease: ${{ github.event.inputs.pre_release }}
+        prerelease: ${{ github.event.inputs.pre_release || false }}
         draft: false
         generate_release_notes: true
 
@@ -154,11 +188,11 @@ jobs:
     
     steps:
     - name: Create announcement issue
-      uses: actions/github-script@v6
+      uses: actions/github-script@v7
       with:
         script: |
           const version = '${{ needs.prepare-release.outputs.new_version }}';
-          const isPreRelease = ${{ github.event.inputs.pre_release }};
+          const isPreRelease = ${{ github.event.inputs.pre_release || false }};
           const releaseType = isPreRelease ? 'Pre-release' : 'Release';
           
           const issueBody = `🎉 **ggoat v${version} has been released!**
@@ -205,7 +239,7 @@ jobs:
     
     steps:
     - name: Trigger documentation update
-      uses: actions/github-script@v6
+      uses: actions/github-script@v7
       with:
         script: |
           // Trigger the documentation workflow to rebuild with new version

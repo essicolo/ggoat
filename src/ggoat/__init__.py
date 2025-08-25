@@ -26,7 +26,7 @@ Documentation: https://ggoat.readthedocs.io/
 Repository: https://github.com/ggoat/ggoat
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .core import ggplot
 from .aes import aes
